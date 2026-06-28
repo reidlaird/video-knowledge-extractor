@@ -1,0 +1,194 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Video Knowledge Extractor</title>
+    <link rel="stylesheet" href="/style.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <h1>Video Knowledge Extractor</h1>
+        <p class="subtitle">
+          Transcribe speech with Whisper, read on-screen text with OCR, optionally describe frames
+          with Ollama vision, and export a Cursor Agent Skill.
+        </p>
+      </header>
+
+      <section class="card">
+        <div class="controls">
+          <div>
+            <label for="mode">Analysis mode</label>
+            <select id="mode">
+              <option value="transcribe">Transcript only</option>
+              <option value="analyze" selected>Full analysis + skill export</option>
+            </select>
+          </div>
+          <div>
+            <label for="model">Whisper model</label>
+            <select id="model">
+              <option value="tiny">Tiny (fastest, lower accuracy)</option>
+              <option value="base" selected>Base (good balance)</option>
+              <option value="small">Small (better accuracy)</option>
+              <option value="medium">Medium (slow, high accuracy)</option>
+              <option value="large-v3">Large v3 (slowest, best accuracy)</option>
+            </select>
+          </div>
+          <div>
+            <label for="language">Language (optional)</label>
+            <select id="language">
+              <option value="">Auto-detect</option>
+              <option value="en">English</option>
+              <option value="es">Spanish</option>
+              <option value="fr">French</option>
+              <option value="de">German</option>
+              <option value="pt">Portuguese</option>
+              <option value="it">Italian</option>
+              <option value="ja">Japanese</option>
+              <option value="ko">Korean</option>
+              <option value="zh">Chinese</option>
+            </select>
+          </div>
+        </div>
+
+        <div id="analysis-options" class="analysis-options">
+          <div class="controls">
+            <div>
+              <label for="skill-name">Skill name (optional)</label>
+              <input id="skill-name" type="text" placeholder="my-tutorial-skill" />
+            </div>
+            <div>
+              <label for="interval-seconds">Frame interval (seconds)</label>
+              <input id="interval-seconds" type="number" min="5" max="300" value="30" />
+            </div>
+            <div>
+              <label for="max-frames">Max frames</label>
+              <input id="max-frames" type="number" min="5" max="120" value="40" />
+            </div>
+          </div>
+
+          <div class="checkbox-row">
+            <label class="checkbox-label">
+              <input id="use-ocr" type="checkbox" checked />
+              OCR on-screen text (EasyOCR)
+            </label>
+            <label class="checkbox-label">
+              <input id="use-ollama" type="checkbox" />
+              Ollama vision descriptions (requires local Ollama + llava/moondream)
+            </label>
+          </div>
+
+          <div class="controls">
+            <div>
+              <label for="ollama-model">Ollama vision model</label>
+              <input id="ollama-model" type="text" value="llava" />
+            </div>
+          </div>
+        </div>
+
+        <div id="output-preview" class="output-preview">
+          <label class="output-label" for="output-dir">Output folder</label>
+          <input id="output-dir" type="text" placeholder="d:\dev\video-transcriber\output\my-skill-name" />
+          <div class="output-actions">
+            <button id="reset-output-btn" type="button" class="secondary">Reset to default</button>
+          </div>
+          <p id="output-files-preview" class="output-files"></p>
+          <p class="output-hint">
+            Files are saved automatically to the folder above when analysis completes. Copy into
+            <code id="cursor-skill-preview">~/.cursor/skills/&lt;skill-name&gt;/</code> to use as a Cursor skill.
+          </p>
+        </div>
+
+        <div id="dropzone" class="dropzone" tabindex="0" role="button" aria-label="Upload file">
+          <strong>Drop a video or audio file here</strong>
+          <p>Video recommended for skill export. MP4, WebM, MOV, MKV, MP3, WAV, M4A supported.</p>
+          <input id="file-input" class="hidden-input" type="file" accept="video/*,audio/*,.mp4,.webm,.mkv,.mov,.mp3,.wav,.m4a,.ogg,.flac" />
+        </div>
+
+        <p id="file-meta" class="file-meta" hidden></p>
+
+        <div class="actions">
+          <button id="run-btn" class="primary" disabled>Run analysis</button>
+          <button id="clear-btn" class="secondary" disabled>Clear</button>
+        </div>
+
+        <div id="status" class="status info" hidden></div>
+
+        <div id="progress-panel" class="progress-panel" hidden>
+          <div class="progress-header">
+            <strong id="progress-stage">Starting…</strong>
+            <span id="progress-percent">0%</span>
+          </div>
+          <div class="progress-track" aria-hidden="true">
+            <div id="progress-bar" class="progress-bar"></div>
+          </div>
+          <p id="progress-message" class="progress-message"></p>
+          <p id="progress-output" class="progress-output"></p>
+        </div>
+      </section>
+
+      <section id="skill-results" class="card results" hidden>
+        <div class="results-header">
+          <h2>Generated skill</h2>
+          <div class="actions" style="margin-top: 0">
+            <button id="download-skill-btn" class="secondary">Download SKILL.md</button>
+            <button id="download-reference-btn" class="secondary">Download reference.md</button>
+            <button id="download-timeline-btn" class="secondary">Download timeline.md</button>
+          </div>
+        </div>
+
+        <div class="meta-grid">
+          <div class="meta-item">
+            <span>Saved to</span>
+            <strong id="skill-meta-output">-</strong>
+          </div>
+          <div class="meta-item">
+            <span>Skill name</span>
+            <strong id="skill-meta-name">-</strong>
+          </div>
+          <div class="meta-item">
+            <span>Frames analyzed</span>
+            <strong id="skill-meta-frames">-</strong>
+          </div>
+          <div class="meta-item">
+            <span>Vision model</span>
+            <strong id="skill-meta-vision">-</strong>
+          </div>
+        </div>
+
+        <textarea id="skill-preview" readonly aria-label="Generated skill preview"></textarea>
+      </section>
+
+      <section id="results" class="card results" hidden>
+        <div class="results-header">
+          <h2>Transcript</h2>
+          <div class="actions" style="margin-top: 0">
+            <button id="copy-btn" class="secondary">Copy text</button>
+            <button id="download-txt-btn" class="secondary">Download .txt</button>
+            <button id="download-srt-btn" class="secondary">Download .srt</button>
+          </div>
+        </div>
+
+        <div class="meta-grid">
+          <div class="meta-item">
+            <span>Detected language</span>
+            <strong id="meta-language">-</strong>
+          </div>
+          <div class="meta-item">
+            <span>Confidence</span>
+            <strong id="meta-confidence">-</strong>
+          </div>
+          <div class="meta-item">
+            <span>Duration</span>
+            <strong id="meta-duration">-</strong>
+          </div>
+        </div>
+
+        <textarea id="transcript" readonly aria-label="Transcript output"></textarea>
+      </section>
+    </main>
+
+    <script src="/app.js"></script>
+  </body>
+</html>
