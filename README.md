@@ -28,7 +28,7 @@ Turn videos and audio files into structured knowledge you can save as a **Cursor
 ## Setup
 
 ```powershell
-cd d:\dev\video-transcriber
+cd D:\projects\video-transcriber
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt

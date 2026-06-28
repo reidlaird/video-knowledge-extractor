@@ -200,7 +200,7 @@ async function refreshOutputPreview(force = false) {
     if (!outputDirInput.value) {
       outputDirInput.placeholder = defaultOutputRoot
         ? `${defaultOutputRoot}\\my-skill-name`
-        : "d:\\dev\\video-transcriber\\output\\my-skill-name";
+        : "D:\\projects\\video-transcriber\\output\\my-skill-name";
     }
   }
 }
