@@ -52,7 +52,7 @@ For tutorial videos where visuals matter (IDE walkthroughs, diagrams, demos):
 ollama pull llava
 ```
 
-Then enable **Ollama vision descriptions** in the UI. If Ollama is not running, the app still works with OCR + transcript.
+Then enable **Ollama vision descriptions** in the UI. Vision notes are written to `reference.md`. **For Cursor skill export, leave this off for now** — full vision text in `SKILL.md` procedure has been observed to add noise and hallucinations on tutorial frames; see [`docs/TEST-RESULTS.md`](docs/TEST-RESULTS.md). If Ollama is not running, the app still works with OCR + transcript.
 
 ## Saving as a Cursor skill
 
@@ -86,6 +86,8 @@ Full analysis applies automatic cleanup so exported skills are usable without he
 Run tests: `python -m unittest tests.test_text_analysis -v`
 
 See `HANDOFF.md` for the latest polish pass notes and what to verify on the next test run.
+
+**Validated (June 2026):** Full analysis on a UI/UX tutorial screencast — OCR-only export produces a usable Cursor skill; enabling Ollama vision (`moondream`) enriches `reference.md` but currently **breaks `SKILL.md`** by inlining long, often hallucinated vision paragraphs in the procedure. Details in [`docs/TEST-RESULTS.md`](docs/TEST-RESULTS.md). Until fixed, leave **Ollama vision** unchecked when exporting skills.
 
 ## Model sizes (Whisper)
 
