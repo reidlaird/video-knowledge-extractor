@@ -72,6 +72,21 @@ Example layout:
 
 Edit the generated skill before saving — tighten the description, remove noise, and add triggers specific to how you want the agent to use it.
 
+## Skill quality (post-processing)
+
+Full analysis applies automatic cleanup so exported skills are usable without heavy manual editing:
+
+| Stage | What it does |
+|-------|----------------|
+| **OCR filter** (`app/ocr_filter.py`) | Drops sponsor UI, demo menus, chat widgets, prices, and other screencast noise before merge |
+| **Speech-weighted concepts** (`app/text_analysis.py`) | Key concepts come from transcript domain terms, not OCR word counts |
+| **Tier-1 pinning** | Tutorial staples (hierarchy, typography, white space, signifiers, affordances, …) rank above generic frequency hits |
+| **On-screen line pick** | Procedure steps only cite OCR lines that overlap the spoken segment (or compound headings like `X & Y`) |
+
+Run tests: `python -m unittest tests.test_text_analysis -v`
+
+See `HANDOFF.md` for the latest polish pass notes and what to verify on the next test run.
+
 ## Model sizes (Whisper)
 
 | Model | Speed | Accuracy |

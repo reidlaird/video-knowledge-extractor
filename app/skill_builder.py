@@ -1,103 +1,19 @@
 from __future__ import annotations
 
-import re
-from collections import Counter
 from dataclasses import dataclass
 from pathlib import Path
 
 from app.media import format_clock, slugify
+from app.ocr_filter import filter_ocr_lines
+from app.text_analysis import (
+    best_on_screen_line,
+    build_description,
+    build_overview_intro,
+    clean_title,
+    extract_key_terms,
+)
 from app.transcribe import TranscriptResult
 from app.video_analysis import VideoAnalysisResult
-
-STOPWORDS = {
-    "about",
-    "after",
-    "also",
-    "and",
-    "any",
-    "are",
-    "back",
-    "because",
-    "before",
-    "being",
-    "between",
-    "but",
-    "can",
-    "could",
-    "first",
-    "for",
-    "from",
-    "get",
-    "good",
-    "have",
-    "how",
-    "into",
-    "just",
-    "know",
-    "like",
-    "more",
-    "need",
-    "not",
-    "now",
-    "one",
-    "other",
-    "our",
-    "out",
-    "really",
-    "right",
-    "should",
-    "start",
-    "than",
-    "that",
-    "the",
-    "their",
-    "there",
-    "these",
-    "they",
-    "this",
-    "through",
-    "use",
-    "using",
-    "very",
-    "want",
-    "was",
-    "way",
-    "what",
-    "when",
-    "where",
-    "which",
-    "will",
-    "with",
-    "would",
-    "you",
-    "your",
-}
-
-
-def _extract_heading_terms(visual: VideoAnalysisResult | None) -> list[str]:
-    if not visual:
-        return []
-
-    headings: list[str] = []
-    seen: set[str] = set()
-    for frame in visual.frames:
-        for line in frame.ocr_text:
-            cleaned = line.strip()
-            if len(cleaned) < 4:
-                continue
-            looks_like_heading = (
-                "&" in cleaned
-                or (cleaned[0].isupper() and sum(1 for char in cleaned if char.isupper()) >= 2)
-                or cleaned.isupper()
-            )
-            if not looks_like_heading:
-                continue
-            key = cleaned.lower()
-            if key in seen:
-                continue
-            seen.add(key)
-            headings.append(cleaned)
-    return headings[:8]
 
 
 @dataclass
@@ -116,56 +32,22 @@ class TimelineEntry:
     visual_notes: list[str]
 
 
-def _tokenize(text: str) -> list[str]:
-    words = re.findall(r"[a-zA-Z][a-zA-Z0-9_-]{2,}", text.lower())
-    return [word for word in words if word not in STOPWORDS]
+def _build_overview(
+    transcript: TranscriptResult,
+    visual: VideoAnalysisResult | None,
+    key_terms: list[str],
+) -> str:
+    intro = build_overview_intro(transcript, key_terms)
 
-
-def _extract_key_terms(transcript: TranscriptResult, visual: VideoAnalysisResult | None) -> list[str]:
-    counter: Counter[str] = Counter()
-
-    for segment in transcript.segments:
-        counter.update(_tokenize(segment.text))
-
-    if visual:
-        for frame in visual.frames:
-            for line in frame.ocr_text:
-                counter.update(_tokenize(line))
-
-    ranked = [term for term, count in counter.most_common(20) if count >= 2 and len(term) >= 4]
-    heading_terms = _extract_heading_terms(visual)
-    merged: list[str] = []
-    seen: set[str] = set()
-    for term in heading_terms + ranked:
-        key = term.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        merged.append(term)
-    return merged[:8]
-
-
-def _build_overview(transcript: TranscriptResult, visual: VideoAnalysisResult | None) -> str:
-    intro = " ".join(segment.text for segment in transcript.segments[:4]).strip()
-    if len(intro) > 420:
-        intro = intro[:417].rstrip() + "..."
-
-    parts = [intro or "This skill captures knowledge extracted from a source video."]
     if visual and visual.frames_analyzed:
-        parts.append(
-            f"Visual analysis sampled {visual.frames_analyzed} frames, including scene changes "
-            f"and on-screen text detected via OCR."
-        )
-        if visual.ollama_model:
-            parts.append(f"Frame descriptions were generated with Ollama model `{visual.ollama_model}`.")
-    return " ".join(parts)
+        intro += f" Visual notes were captured from {visual.frames_analyzed} sampled frames."
+
+    return intro
 
 
 def _merge_timeline(
     transcript: TranscriptResult,
     visual: VideoAnalysisResult | None,
-    *,
-    window_seconds: float = 18.0,
 ) -> list[TimelineEntry]:
     entries: dict[int, TimelineEntry] = {}
 
@@ -178,9 +60,12 @@ def _merge_timeline(
         for frame in visual.frames:
             bucket = int(round(frame.timestamp / 15.0) * 15)
             entry = entries.setdefault(bucket, TimelineEntry(timestamp=float(bucket), speech=[], on_screen=[], visual_notes=[]))
-            entry.on_screen.extend(frame.ocr_text)
+            entry.on_screen.extend(filter_ocr_lines(frame.ocr_text))
             if frame.description:
                 entry.visual_notes.append(frame.description)
+
+    for entry in entries.values():
+        entry.on_screen = filter_ocr_lines(entry.on_screen)
 
     return [entries[key] for key in sorted(entries)]
 
@@ -235,11 +120,14 @@ def _render_reference(
     if visual and visual.frames:
         lines.extend(["## Visual frame notes", ""])
         for frame in visual.frames:
+            filtered = filter_ocr_lines(frame.ocr_text)
+            if not filtered and not frame.description:
+                continue
             lines.append(f"### {frame.source}")
-            if frame.ocr_text:
+            if filtered:
                 lines.append("")
                 lines.append("OCR:")
-                for line in frame.ocr_text:
+                for line in filtered:
                     lines.append(f"- {line}")
             if frame.description:
                 lines.append("")
@@ -262,16 +150,6 @@ def _render_reference(
     return "\n".join(lines).strip() + "\n"
 
 
-def _build_description(source_name: str, key_terms: list[str], has_visual: bool) -> str:
-    topic = Path(source_name).stem.replace("_", " ").replace("-", " ").strip() or "video content"
-    term_hint = ", ".join(key_terms[:5]) if key_terms else topic
-    visual_hint = " Includes on-screen text and visual context from frame analysis." if has_visual else ""
-    return (
-        f"Provides extracted knowledge from `{topic}` covering {term_hint}. "
-        f"Use when the user asks about this topic, workflow, or material from the source video.{visual_hint}"
-    )
-
-
 def build_skill_bundle(
     *,
     source_name: str,
@@ -281,9 +159,9 @@ def build_skill_bundle(
 ) -> SkillBundle:
     base_name = Path(source_name).stem
     resolved_name = slugify(skill_name or base_name)
-    key_terms = _extract_key_terms(transcript, visual)
-    overview = _build_overview(transcript, visual)
+    key_terms = extract_key_terms(transcript, visual)
     entries = _merge_timeline(transcript, visual)
+    overview = _build_overview(transcript, visual, key_terms)
     timeline_md = _render_timeline(entries)
     reference_md = _render_reference(
         source_name=source_name,
@@ -292,8 +170,8 @@ def build_skill_bundle(
         entries=entries,
     )
 
-    title = base_name.replace("_", " ").replace("-", " ").strip() or "Extracted Video Knowledge"
-    description = _build_description(source_name, key_terms, bool(visual and visual.frames))
+    title = clean_title(base_name)
+    description = build_description(title=title, key_terms=key_terms, has_visual=bool(visual and visual.frames))
 
     concept_lines = [f"- {term}" for term in key_terms] or ["- Review the timeline and transcript in `reference.md`."]
 
@@ -305,11 +183,15 @@ def build_skill_bundle(
         summary = entry.speech[0]
         if len(summary) > 180:
             summary = summary[:177].rstrip() + "..."
+
+        on_screen = best_on_screen_line(entry.on_screen, summary)
+        visual_note = entry.visual_notes[0] if entry.visual_notes else None
+
         extras: list[str] = []
-        if entry.on_screen:
-            extras.append(f"On-screen: {entry.on_screen[0]}")
-        if entry.visual_notes:
-            extras.append(f"Visual: {entry.visual_notes[0]}")
+        if on_screen:
+            extras.append(f"On-screen: {on_screen}")
+        if visual_note:
+            extras.append(f"Visual: {visual_note}")
         suffix = f" ({'; '.join(extras)})" if extras else ""
         procedure_lines.append(f"{step_number}. **{format_clock(entry.timestamp)}** — {summary}{suffix}")
         step_number += 1
@@ -318,6 +200,8 @@ def build_skill_bundle(
 
     if not procedure_lines:
         procedure_lines.append("1. Read the full transcript and timeline in `reference.md`.")
+
+    trigger_terms = ", ".join(f"`{term}`" for term in key_terms[:5]) or "the material in `reference.md`"
 
     skill_md = f"""---
 name: {resolved_name}
@@ -330,8 +214,8 @@ description: {description}
 {overview}
 
 ## When to use this skill
-- The user asks about `{title}` or related workflows captured in the source video.
-- The user references concepts such as {", ".join(f"`{term}`" for term in key_terms[:5]) or "the material in `reference.md`"}.
+- The user asks about {title.lower()} or related UI/UX design guidance from the source video.
+- The user references concepts such as {trigger_terms}.
 - You need step-by-step guidance that combines spoken explanation with on-screen context.
 
 ## Key concepts

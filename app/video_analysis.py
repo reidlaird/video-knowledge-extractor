@@ -8,6 +8,7 @@ from pathlib import Path
 
 from app.jobs import ProgressCallback
 from app.media import extract_frame, format_clock, is_video, probe_duration
+from app.ocr_filter import filter_ocr_lines
 
 OCR_READER = None
 
@@ -40,18 +41,8 @@ def _get_ocr_reader():
 
 
 def _normalize_ocr_lines(lines: list[str]) -> list[str]:
-    cleaned: list[str] = []
-    seen: set[str] = set()
-    for line in lines:
-        text = re.sub(r"\s+", " ", line).strip()
-        if len(text) < 3:
-            continue
-        key = text.lower()
-        if key in seen:
-            continue
-        seen.add(key)
-        cleaned.append(text)
-    return cleaned
+    cleaned = [re.sub(r"\s+", " ", line).strip() for line in lines if line.strip()]
+    return filter_ocr_lines(cleaned)
 
 
 def ocr_image(image_path: Path) -> list[str]:
@@ -81,6 +72,17 @@ def _detect_scene_timestamps(source: Path, *, threshold: float) -> list[float]:
     return timestamps
 
 
+def _dedupe_scene_timestamps(timestamps: list[float], *, min_gap: float = 5.0) -> list[float]:
+    if not timestamps:
+        return []
+
+    kept: list[float] = []
+    for timestamp in sorted(timestamps):
+        if not kept or timestamp - kept[-1] >= min_gap:
+            kept.append(timestamp)
+    return kept
+
+
 def _collect_frame_times(
     duration: float,
     *,
@@ -90,20 +92,21 @@ def _collect_frame_times(
 ) -> list[tuple[float, bool]]:
     selected: dict[int, bool] = {}
 
-    for timestamp in scene_timestamps:
-        bucket = int(round(timestamp))
-        if 0 <= timestamp <= duration:
-            selected[bucket] = True
-
     interval = max(5.0, interval_seconds)
     tick = 0.0
     while tick <= duration:
         bucket = int(round(tick))
-        selected.setdefault(bucket, False)
+        selected[bucket] = False
         tick += interval
 
     selected.setdefault(0, False)
     selected.setdefault(int(round(duration)), False)
+
+    scene_budget = max(4, max_frames // 3)
+    for timestamp in _dedupe_scene_timestamps(scene_timestamps)[:scene_budget]:
+        bucket = int(round(timestamp))
+        if 0 <= timestamp <= duration:
+            selected[bucket] = True
 
     ordered = sorted(selected.items(), key=lambda item: item[0])[:max_frames]
     return [(float(seconds), scene_change) for seconds, scene_change in ordered]
